@@ -1,0 +1,46 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+server/node_modules/
+
+# OS/Editor Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build/Production
+dist
+dist-ssr
+build
+out
+.next/
+
+# Testing
+coverage/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Claude Data / Local Cache
+.claude/
+.gemini/

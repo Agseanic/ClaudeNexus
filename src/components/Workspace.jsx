@@ -1,0 +1,611 @@
+import { useEffect, useRef, useState } from "react";
+import ProjectList from "./ProjectList.jsx";
+import Sidebar from "./Sidebar.jsx";
+import TerminalView from "./TerminalView.jsx";
+
+function cwdToSessionId(cwd) {
+  return `session-${(cwd || "default").replace(/\//g, "-")}`;
+}
+
+function authHeaders(token) {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function StatusBar({ apiBase, cwd, token, onOpenSettings }) {
+  const [health, setHealth] = useState({ status: "checking", sessions: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const [healthResponse, sessionsResponse] = await Promise.all([
+          fetch(`${apiBase}/health`, { headers: authHeaders(token) }),
+          fetch(`${apiBase}/api/sessions`, { headers: authHeaders(token) }),
+        ]);
+        const healthData = await healthResponse.json();
+        const sessionsData = await sessionsResponse.json();
+
+        if (!cancelled) {
+          setHealth({
+            status: healthData.status || "ok",
+            sessions: Array.isArray(sessionsData) ? sessionsData.length : healthData.sessions || 0,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setHealth({ status: "offline", sessions: 0 });
+        }
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [apiBase, token]);
+
+  const handleLogout = () => {
+    window.localStorage.removeItem("claudehub_v2_token");
+    window.location.reload();
+  };
+
+  return (
+    <header style={statusBarStyle}>
+      <div style={brandStyle}>
+        <span>Claude Nexus</span>
+      </div>
+      <div style={metaStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div
+            className={health.status === "ok" ? "status-dot-pulse" : ""}
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: health.status === "ok" ? "#22c55e" : "#ef4444",
+            }}
+          ></div>
+          <span style={{ color: health.status === "ok" ? "#22c55e" : "#ef4444" }}>
+            {health.status === "ok" ? "已连接" : "离线"}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, color: "#a1a1aa" }}>
+          <span>{health.sessions} 会话</span>
+        </div>
+        <div style={cwdStyle} title={cwd || "未配置工作目录"}>
+          📁 {cwd || "未配置工作目录"}
+        </div>
+      </div>
+      <div style={actionGroupStyle}>
+        <button className="icon-btn" style={iconButtonStyle} onClick={onOpenSettings} title="设置">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+        <button className="icon-btn" style={iconButtonStyle} onClick={handleLogout} title="登出">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+        </button>
+      </div>
+    </header>
+  );
+}
+
+export default function Workspace({ wsUrl, apiBase, config, token, onOpenSettings }) {
+  const baseCwd = config.defaultCwd;
+  const termRefs = useRef({});
+  const [currentProject, setCurrentProject] = useState(null);
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const openProject = (projectPath) => {
+    setCurrentProject(projectPath);
+    const projectName = projectPath.split("/").pop() || "Terminal";
+    const sessionId = cwdToSessionId(projectPath);
+
+    // 如果已有该项目的 tab，直接切换
+    const existing = tabs.find((tab) => tab.cwd === projectPath);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+
+    // 直接创建 tab，用 claude -c（continue 最近对话）
+    const tab = {
+      id: `tab-${sessionId}`,
+      label: projectName,
+      cwd: projectPath,
+      sessionId,
+      continueId: "__latest__",  // 特殊标记：continue 最近一次对话
+    };
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  };
+
+  const openConversation = (conversationId, title) => {
+    if (!currentProject) return;
+    const projectName = currentProject.split("/").pop() || "Terminal";
+    const existing = tabs.find((tab) => tab.continueId === conversationId);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+
+    const tab = {
+      id: `tab-${conversationId}`,
+      label: title || projectName,
+      cwd: currentProject,
+      sessionId: `${cwdToSessionId(currentProject)}-${conversationId}`,
+      continueId: conversationId,
+    };
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  };
+
+  const newSession = () => {
+    if (!currentProject) return;
+    const projectName = currentProject.split("/").pop() || "Terminal";
+    const suffix = Date.now();
+    const tab = {
+      id: `tab-${suffix}`,
+      label: `${projectName} (new)`,
+      cwd: currentProject,
+      sessionId: `${cwdToSessionId(currentProject)}-${suffix}`,
+      continueId: "",
+    };
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  };
+
+  const createProject = async () => {
+    setShowNewProject(true);
+    setNewProjectName("");
+  };
+
+  const confirmCreateProject = async () => {
+    if (!newProjectName.trim()) return;
+    setCreating(true);
+    try {
+      const response = await fetch(`${apiBase}/api/projects`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ base: baseCwd, name: newProjectName.trim() }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        window.alert(`创建失败：${error.error}`);
+        return;
+      }
+      const data = await response.json();
+      setShowNewProject(false);
+      openProject(data.path);
+    } catch (error) {
+      window.alert(`创建失败：${error.message}`);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const closeTab = (tabId) => {
+    if (tabs.length <= 1) return;
+    setTabs((current) => {
+      const next = current.filter((tab) => tab.id !== tabId);
+      if (tabId === activeTabId && next.length > 0) {
+        const last = next[next.length - 1];
+        setActiveTabId(last.id);
+        setCurrentProject(last.cwd);
+      }
+      return next;
+    });
+    delete termRefs.current[tabId];
+  };
+
+  const handleCommand = (cmd) => {
+    termRefs.current[activeTabId]?.sendInput(cmd);
+  };
+
+  return (
+    <div style={rootStyle}>
+      <StatusBar
+        apiBase={apiBase}
+        cwd={currentProject || baseCwd}
+        token={token}
+        onOpenSettings={onOpenSettings}
+      />
+      <div style={bodyStyle}>
+        <Sidebar
+          apiBase={apiBase}
+          currentProject={currentProject}
+          token={token}
+          onCommand={handleCommand}
+          onOpenConversation={openConversation}
+          onNewSession={newSession}
+        />
+        <div style={mainStyle}>
+          <div style={tabBarStyle}>
+            <button
+              className="icon-btn"
+              style={projectsBtnStyle}
+              onClick={() => {
+                setActiveTabId(null);
+              }}
+              title="返回项目列表"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            </button>
+            <div className="tab-list-no-scrollbar" style={tabListStyle}>
+              {tabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  style={{
+                    ...tabItemStyle,
+                    ...(tab.id === activeTabId ? activeTabItemStyle : {}),
+                  }}
+                  onClick={() => {
+                    setActiveTabId(tab.id);
+                    setCurrentProject(tab.cwd);
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                  <span style={tabLabelStyle}>{tab.label}</span>
+                  {tabs.length > 1 ? (
+                    <span
+                      style={tabCloseStyle}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeTab(tab.id);
+                      }}
+                      title="关闭"
+                    >
+                      ×
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {!activeTabId ? (
+            <div style={emptyStateStyle}>
+              <ProjectList
+                apiBase={apiBase}
+                baseCwd={baseCwd}
+                currentProject={currentProject}
+                token={token}
+                onSelect={openProject}
+                onCreateProject={createProject}
+              />
+            </div>
+          ) : null}
+
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              style={{
+                ...terminalWrapStyle,
+                display: tab.id === activeTabId ? "block" : "none",
+              }}
+            >
+              <TerminalView
+                ref={(element) => {
+                  if (element) {
+                    termRefs.current[tab.id] = element;
+                  } else {
+                    delete termRefs.current[tab.id];
+                  }
+                }}
+                wsUrl={wsUrl}
+                sessionId={tab.sessionId}
+                cwd={tab.cwd}
+                token={token}
+                continueId={tab.continueId}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+      {showNewProject ? (
+        <div style={modalOverlayStyle} onClick={() => setShowNewProject(false)}>
+          <div
+            style={modalCardStyle}
+            className="glass-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 style={modalTitleStyle}>新建项目</h3>
+            <p style={modalSubtitleStyle}>将在 {baseCwd}/ 下创建文件夹</p>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                confirmCreateProject();
+              }}
+            >
+              <input
+                className="input-focus"
+                style={modalInputStyle}
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder="输入项目名称"
+                autoFocus
+              />
+              <div style={modalActionsStyle}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={modalCancelBtnStyle}
+                  onClick={() => setShowNewProject(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="btn"
+                  style={modalConfirmBtnStyle}
+                  disabled={!newProjectName.trim() || creating}
+                >
+                  {creating ? "创建中..." : "创建"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const rootStyle = {
+  minHeight: "100vh",
+  display: "flex",
+  flexDirection: "column",
+  background: "#09090b",
+  color: "#fafafa",
+};
+
+const statusBarStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  height: 40,
+  padding: "0 16px",
+  background: "#0f0f12",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+  fontSize: 13,
+};
+
+const brandStyle = {
+  fontWeight: 600,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 200,
+};
+
+const metaStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 24,
+  flex: 1,
+  minWidth: 0,
+};
+
+const cwdStyle = {
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  color: "#a1a1aa",
+  maxWidth: 300,
+  fontSize: 12,
+  background: "rgba(255,255,255,0.04)",
+  padding: "4px 8px",
+  borderRadius: 6,
+};
+
+const actionGroupStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 8,
+  minWidth: 200,
+};
+
+const iconButtonStyle = {
+  background: "transparent",
+  border: "none",
+  color: "#a1a1aa",
+  borderRadius: 6,
+  width: 28,
+  height: 28,
+  display: "grid",
+  placeItems: "center",
+  cursor: "pointer",
+};
+
+const bodyStyle = {
+  display: "flex",
+  flex: 1,
+  minHeight: 0,
+};
+
+const mainStyle = {
+  display: "grid",
+  gridTemplateRows: "36px minmax(0, 1fr)",
+  flex: 1,
+  minWidth: 0,
+  overflow: "hidden",
+};
+
+const terminalWrapStyle = {
+  minHeight: 0,
+  position: "relative",
+  padding: 8,
+};
+
+const tabBarStyle = {
+  display: "flex",
+  alignItems: "center",
+  height: 36,
+  background: "#09090b",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+  padding: "0 8px",
+  gap: 8,
+};
+
+const tabListStyle = {
+  display: "flex",
+  alignItems: "flex-end",
+  gap: 2,
+  height: "100%",
+  overflowX: "auto",
+  overflowY: "hidden",
+  flex: 1,
+  minWidth: 0,
+  scrollbarWidth: "none",
+};
+
+const tabItemStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "6px 12px",
+  fontSize: 12,
+  color: "#a1a1aa",
+  cursor: "pointer",
+  borderTopLeftRadius: 6,
+  borderTopRightRadius: 6,
+  whiteSpace: "nowrap",
+  position: "relative",
+  bottom: -1,
+  borderTop: "1px solid transparent",
+  borderLeft: "1px solid transparent",
+  borderRight: "1px solid transparent",
+};
+
+const activeTabItemStyle = {
+  background: "#0f0f12",
+  color: "#e4e4e7",
+  borderTop: "1px solid rgba(255,255,255,0.06)",
+  borderLeft: "1px solid rgba(255,255,255,0.06)",
+  borderRight: "1px solid rgba(255,255,255,0.06)",
+};
+
+const tabLabelStyle = {
+  maxWidth: 120,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const tabCloseStyle = {
+  fontSize: 14,
+  lineHeight: 1,
+  color: "#52525b",
+  cursor: "pointer",
+  padding: "0 2px",
+  borderRadius: 3,
+};
+
+const emptyStateStyle = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#0f0f12",
+  margin: 8,
+  borderRadius: 8,
+  border: "1px solid rgba(255,255,255,0.06)",
+  padding: 32,
+};
+
+const projectsBtnStyle = {
+  background: "transparent",
+  border: "none",
+  color: "#a1a1aa",
+  cursor: "pointer",
+  width: 28,
+  height: 28,
+  display: "grid",
+  placeItems: "center",
+  borderRadius: 6,
+  flexShrink: 0,
+};
+
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(9, 9, 11, 0.7)",
+  backdropFilter: "blur(8px)",
+  WebkitBackdropFilter: "blur(8px)",
+  display: "grid",
+  placeItems: "center",
+  zIndex: 50,
+};
+
+const modalCardStyle = {
+  width: "min(400px, 90vw)",
+  borderRadius: 16,
+  padding: 24,
+  background: "#18181b",
+  border: "1px solid rgba(255,255,255,0.08)",
+  boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+};
+
+const modalTitleStyle = {
+  margin: "0 0 4px",
+  fontSize: 16,
+  fontWeight: 600,
+  color: "#fafafa",
+};
+
+const modalSubtitleStyle = {
+  margin: "0 0 16px",
+  fontSize: 12,
+  color: "#a1a1aa",
+};
+
+const modalInputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid rgba(255,255,255,0.1)",
+  background: "rgba(255,255,255,0.04)",
+  color: "#fafafa",
+  outline: "none",
+  fontSize: 14,
+  marginBottom: 16,
+};
+
+const modalActionsStyle = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 8,
+};
+
+const modalCancelBtnStyle = {
+  background: "transparent",
+  border: "1px solid rgba(255,255,255,0.1)",
+  color: "#a1a1aa",
+  borderRadius: 8,
+  padding: "8px 16px",
+  cursor: "pointer",
+  fontSize: 13,
+};
+
+const modalConfirmBtnStyle = {
+  background: "#6366f1",
+  border: "1px solid #4f46e5",
+  color: "#fff",
+  borderRadius: 8,
+  padding: "8px 16px",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 500,
+};

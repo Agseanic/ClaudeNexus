@@ -1,0 +1,26 @@
+{
+  "name": "claude-nexus",
+  "version": "2.0.0",
+  "description": "Browser-based IDE for Claude Code with remote terminal, project & conversation management",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "vite",
+    "build": "vite build",
+    "install:all": "npm install && cd server && npm install"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "vite": "^6.0.0"
+  }
+}
