@@ -44,3 +44,8 @@ coverage/
 # Claude Data / Local Cache
 .claude/
 .gemini/
+
+# Exclude images and fix document
+1.png
+2.png
+FIX.md
