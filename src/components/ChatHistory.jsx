@@ -17,7 +17,7 @@ function formatRelativeTime(value) {
   return `${days}天前`;
 }
 
-export default function ChatHistory({ apiBase, cwd, token, onSelect, onNewSession }) {
+export default function ChatHistory({ apiBase, cwd, token, onSelect }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -32,19 +32,15 @@ export default function ChatHistory({ apiBase, cwd, token, onSelect, onNewSessio
     setError("");
     try {
       const url = `${apiBase}/api/conversations?cwd=${encodeURIComponent(cwd)}`;
-      console.log("[ChatHistory] fetching:", url);
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      console.log("[ChatHistory] response status:", response.status);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      console.log("[ChatHistory] data:", data);
       setItems(Array.isArray(data) ? data : []);
     } catch (errorValue) {
-      console.error("[ChatHistory] error:", errorValue);
       setError(errorValue instanceof Error ? errorValue.message : "加载失败");
     } finally {
       setLoading(false);
@@ -66,19 +62,12 @@ export default function ChatHistory({ apiBase, cwd, token, onSelect, onNewSessio
   }, [loadData, apiBase, cwd, token]);
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+    <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={headerStyle}>
         <span style={sectionHeader}>HISTORY</span>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button className="icon-btn" style={iconBtnStyle} onClick={loadData} title="刷新">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
-          </button>
-          {onNewSession ? (
-            <button className="icon-btn" style={iconBtnStyle} onClick={onNewSession} title="新建会话">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-          ) : null}
-        </div>
+        <button className="icon-btn" style={iconBtnStyle} onClick={loadData} title="刷新">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
+        </button>
       </div>
       <div style={listStyle}>
         {loading && <div style={emptyStyle}>加载中...</div>}
@@ -91,10 +80,13 @@ export default function ChatHistory({ apiBase, cwd, token, onSelect, onNewSessio
               key={item.id}
               className="history-item"
               style={itemStyle}
-              onClick={() =>
-                onSelect &&
-                onSelect(item.conversationId || item.id.replace(/\.jsonl$/, ""), item.title)
-              }
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (onSelect) {
+                  onSelect(item.conversationId || item.id.replace(/\.jsonl$/, ""), item.title);
+                }
+              }}
             >
               <div style={titleStyle}>{truncateTitle(item.title)}</div>
               <div style={metaStyle}>{formatRelativeTime(item.updatedAt)}</div>
@@ -136,7 +128,7 @@ const listStyle = {
   display: "grid",
   gap: 2,
   overflowY: "auto",
-  flex: 1,
+  maxHeight: 300,
 };
 
 const itemStyle = {

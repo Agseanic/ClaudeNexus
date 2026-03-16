@@ -62,7 +62,6 @@ export default function ProjectList({
             >
               <span style={cardIconStyle}>📁</span>
               <span style={cardNameStyle}>{project.name}</span>
-              <span style={cardPathStyle}>{project.path}</span>
             </button>
           ))}
 
@@ -138,15 +137,6 @@ const cardIconStyle = {
 const cardNameStyle = {
   fontSize: 13,
   fontWeight: 500,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  width: "100%",
-};
-
-const cardPathStyle = {
-  fontSize: 11,
-  color: "#52525b",
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",

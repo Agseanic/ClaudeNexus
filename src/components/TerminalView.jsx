@@ -37,6 +37,7 @@ const TerminalView = forwardRef(function TerminalView(
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const pingIntervalRef = useRef(null);
+  const connectedRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     sendInput(text) {
@@ -45,10 +46,29 @@ const TerminalView = forwardRef(function TerminalView(
       }
       termRef.current?.focus();
     },
+    refit() {
+      if (fitAddonRef.current && termRef.current) {
+        fitAddonRef.current.fit();
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "RESIZE",
+              cols: termRef.current.cols,
+              rows: termRef.current.rows,
+            }),
+          );
+        }
+        termRef.current.focus();
+      }
+    },
+    getSessionId() {
+      return sessionId;
+    },
   }));
 
   useEffect(() => {
     let disposed = false;
+
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
@@ -70,8 +90,19 @@ const TerminalView = forwardRef(function TerminalView(
     }
 
     term.open(containerRef.current);
-    fitAddon.fit();
     termRef.current = term;
+
+    const sendResize = () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "RESIZE",
+            cols: term.cols,
+            rows: term.rows,
+          }),
+        );
+      }
+    };
 
     const connect = () => {
       const params = new URLSearchParams({
@@ -131,7 +162,25 @@ const TerminalView = forwardRef(function TerminalView(
       };
     };
 
-    connect();
+    const ensureReady = () => {
+      const container = containerRef.current;
+      if (!container) {
+        return;
+      }
+
+      const hasSize = container.clientWidth > 0 && container.clientHeight > 0;
+      if (!hasSize) {
+        return;
+      }
+
+      fitAddon.fit();
+      sendResize();
+
+      if (!connectedRef.current) {
+        connectedRef.current = true;
+        connect();
+      }
+    };
 
     const dataDisposable = term.onData((data) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -139,21 +188,23 @@ const TerminalView = forwardRef(function TerminalView(
       }
     });
 
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "RESIZE", cols, rows }));
-      }
+    const resizeDisposable = term.onResize(() => {
+      sendResize();
     });
 
-    const onWindowResize = () => fitAddon.fit();
+    const onWindowResize = () => ensureReady();
     window.addEventListener("resize", onWindowResize);
+
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      ensureReady();
     });
     resizeObserver.observe(containerRef.current);
 
+    ensureReady();
+
     return () => {
       disposed = true;
+      connectedRef.current = false;
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
       }

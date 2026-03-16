@@ -56,6 +56,8 @@ function getProjectBaseDir(cwd) {
   return path.join(os.homedir(), ".claude", "projects", projectDir);
 }
 
+
+
 function parseJsonLine(line) {
   try {
     return JSON.parse(line);
@@ -282,6 +284,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
+    const sessionId = decodeURIComponent(url.pathname.split("/").pop() || "");
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return;
+    }
+    const killed = ptyManager.killSession(sessionId);
+    sendJson(res, 200, { killed });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/projects") {
     const base = url.searchParams.get("base") || "";
     if (!base) {
@@ -457,6 +470,13 @@ wss.on("connection", (ws, req) => {
         }
         return;
       } catch {
+        if (
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            str.trim(),
+          )
+        ) {
+          return;
+        }
         session.write(str);
       }
     });

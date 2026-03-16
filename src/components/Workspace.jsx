@@ -11,30 +11,27 @@ function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function StatusBar({ apiBase, cwd, token, onOpenSettings }) {
-  const [health, setHealth] = useState({ status: "checking", sessions: 0 });
+function StatusBar({ apiBase, token, onOpenSettings, projectName }) {
+  const [health, setHealth] = useState({ status: "checking" });
 
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
       try {
-        const [healthResponse, sessionsResponse] = await Promise.all([
-          fetch(`${apiBase}/health`, { headers: authHeaders(token) }),
-          fetch(`${apiBase}/api/sessions`, { headers: authHeaders(token) }),
-        ]);
+        const healthResponse = await fetch(`${apiBase}/health`, {
+          headers: authHeaders(token),
+        });
         const healthData = await healthResponse.json();
-        const sessionsData = await sessionsResponse.json();
 
         if (!cancelled) {
           setHealth({
             status: healthData.status || "ok",
-            sessions: Array.isArray(sessionsData) ? sessionsData.length : healthData.sessions || 0,
           });
         }
       } catch {
         if (!cancelled) {
-          setHealth({ status: "offline", sessions: 0 });
+          setHealth({ status: "offline" });
         }
       }
     };
@@ -58,6 +55,9 @@ function StatusBar({ apiBase, cwd, token, onOpenSettings }) {
         <span>Claude Nexus</span>
       </div>
       <div style={metaStyle}>
+        {projectName ? (
+          <span style={{ color: "#e4e4e7", fontWeight: 500 }}>{projectName}</span>
+        ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div
             className={health.status === "ok" ? "status-dot-pulse" : ""}
@@ -71,12 +71,6 @@ function StatusBar({ apiBase, cwd, token, onOpenSettings }) {
           <span style={{ color: health.status === "ok" ? "#22c55e" : "#ef4444" }}>
             {health.status === "ok" ? "已连接" : "离线"}
           </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, color: "#a1a1aa" }}>
-          <span>{health.sessions} 会话</span>
-        </div>
-        <div style={cwdStyle} title={cwd || "未配置工作目录"}>
-          📁 {cwd || "未配置工作目录"}
         </div>
       </div>
       <div style={actionGroupStyle}>
@@ -101,25 +95,33 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
   const [newProjectName, setNewProjectName] = useState("");
   const [creating, setCreating] = useState(false);
 
+  useEffect(() => {
+    if (!activeTabId) return;
+
+    const timer = window.setTimeout(() => {
+      termRefs.current[activeTabId]?.refit();
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTabId]);
+
   const openProject = (projectPath) => {
     setCurrentProject(projectPath);
-    const projectName = projectPath.split("/").pop() || "Terminal";
+    const projectName = projectPath.split("/").filter(Boolean).pop() || "Terminal";
     const sessionId = cwdToSessionId(projectPath);
 
-    // 如果已有该项目的 tab，直接切换
     const existing = tabs.find((tab) => tab.cwd === projectPath);
     if (existing) {
       setActiveTabId(existing.id);
       return;
     }
 
-    // 直接创建 tab，用 claude -c（continue 最近对话）
     const tab = {
       id: `tab-${sessionId}`,
       label: projectName,
       cwd: projectPath,
       sessionId,
-      continueId: "__latest__",  // 特殊标记：continue 最近一次对话
+      continueId: "__latest__",
     };
     setTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
@@ -127,15 +129,21 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
 
   const openConversation = (conversationId, title) => {
     if (!currentProject) return;
-    const projectName = currentProject.split("/").pop() || "Terminal";
-    const existing = tabs.find((tab) => tab.continueId === conversationId);
+
+    const existing = tabs.find(
+      (tab) => tab.cwd === currentProject && tab.continueId === conversationId,
+    );
     if (existing) {
       setActiveTabId(existing.id);
+      window.setTimeout(() => {
+        termRefs.current[existing.id]?.refit();
+      }, 100);
       return;
     }
 
+    const projectName = currentProject.split("/").filter(Boolean).pop() || "Terminal";
     const tab = {
-      id: `tab-${conversationId}`,
+      id: `tab-${currentProject}-${conversationId}`,
       label: title || projectName,
       cwd: currentProject,
       sessionId: `${cwdToSessionId(currentProject)}-${conversationId}`,
@@ -146,17 +154,23 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
   };
 
   const newSession = () => {
-    if (!currentProject) return;
-    const projectName = currentProject.split("/").pop() || "Terminal";
+    const projectPath = currentProject || tabs.find((tab) => tab.id === activeTabId)?.cwd;
+    if (!projectPath) {
+      setActiveTabId(null);
+      return;
+    }
+
+    const projectName = projectPath.split("/").filter(Boolean).pop() || "Terminal";
     const suffix = Date.now();
     const tab = {
       id: `tab-${suffix}`,
       label: `${projectName} (new)`,
-      cwd: currentProject,
-      sessionId: `${cwdToSessionId(currentProject)}-${suffix}`,
+      cwd: projectPath,
+      sessionId: `${cwdToSessionId(projectPath)}-${suffix}`,
       continueId: "",
     };
     setTabs((current) => [...current, tab]);
+    setCurrentProject(projectPath);
     setActiveTabId(tab.id);
   };
 
@@ -167,13 +181,14 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
 
   const confirmCreateProject = async () => {
     if (!newProjectName.trim()) return;
+
     setCreating(true);
     try {
       const response = await fetch(`${apiBase}/api/projects`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeaders(token),
         },
         body: JSON.stringify({ base: baseCwd, name: newProjectName.trim() }),
       });
@@ -194,47 +209,43 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
 
   const closeTab = (tabId) => {
     if (tabs.length <= 1) return;
+
+    const tab = tabs.find((item) => item.id === tabId);
+    if (tab?.sessionId) {
+      fetch(`${apiBase}/api/sessions/${encodeURIComponent(tab.sessionId)}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      }).catch(() => {});
+    }
+
     setTabs((current) => {
-      const next = current.filter((tab) => tab.id !== tabId);
-      if (tabId === activeTabId && next.length > 0) {
-        const last = next[next.length - 1];
-        setActiveTabId(last.id);
-        setCurrentProject(last.cwd);
+      const next = current.filter((item) => item.id !== tabId);
+      if (tabId === activeTabId) {
+        const fallback = next[next.length - 1] || null;
+        setActiveTabId(fallback?.id || null);
+        setCurrentProject(fallback?.cwd || null);
       }
       return next;
     });
     delete termRefs.current[tabId];
   };
 
-  const handleCommand = (cmd) => {
-    termRefs.current[activeTabId]?.sendInput(cmd);
-  };
-
   return (
     <div style={rootStyle}>
-      <StatusBar
-        apiBase={apiBase}
-        cwd={currentProject || baseCwd}
-        token={token}
-        onOpenSettings={onOpenSettings}
-      />
+      <StatusBar apiBase={apiBase} token={token} onOpenSettings={onOpenSettings} projectName={currentProject?.split("/").filter(Boolean).pop() || null} />
       <div style={bodyStyle}>
         <Sidebar
           apiBase={apiBase}
           currentProject={currentProject}
           token={token}
-          onCommand={handleCommand}
           onOpenConversation={openConversation}
-          onNewSession={newSession}
         />
         <div style={mainStyle}>
           <div style={tabBarStyle}>
             <button
               className="icon-btn"
               style={projectsBtnStyle}
-              onClick={() => {
-                setActiveTabId(null);
-              }}
+              onClick={() => setActiveTabId(null)}
               title="返回项目列表"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
@@ -249,7 +260,9 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
                   }}
                   onClick={() => {
                     setActiveTabId(tab.id);
-                    setCurrentProject(tab.cwd);
+                    if (tab.cwd) {
+                      setCurrentProject(tab.cwd);
+                    }
                   }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
@@ -269,6 +282,14 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
                 </div>
               ))}
             </div>
+            <button
+              className="icon-btn"
+              style={projectsBtnStyle}
+              onClick={newSession}
+              title="新建会话"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
           </div>
 
           {!activeTabId ? (
@@ -393,18 +414,6 @@ const metaStyle = {
   gap: 24,
   flex: 1,
   minWidth: 0,
-};
-
-const cwdStyle = {
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  color: "#a1a1aa",
-  maxWidth: 300,
-  fontSize: 12,
-  background: "rgba(255,255,255,0.04)",
-  padding: "4px 8px",
-  borderRadius: 6,
 };
 
 const actionGroupStyle = {

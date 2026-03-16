@@ -40,8 +40,8 @@ class PtySession extends EventEmitter {
       // claude --continue（不带 ID）= 恢复最近一次对话
       args = ["--continue"];
     } else if (continueId) {
-      // claude --continue <uuid> = 恢复指定对话
-      args = ["--continue", continueId];
+      // claude --resume <uuid> = 恢复指定对话
+      args = ["--resume", continueId];
     }
     this.pty = pty.spawn(command, args, {
       name: "xterm-256color",
