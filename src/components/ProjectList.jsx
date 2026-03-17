@@ -57,7 +57,11 @@ export default function ProjectList({
                 ...cardStyle,
                 ...(currentProject === project.path ? cardActiveStyle : {}),
               }}
-              onClick={() => onSelect(project.path)}
+              onClick={() => {
+                Promise.resolve(onSelect(project.path)).catch((error) => {
+                  console.error("[ProjectList] 打开项目失败", error);
+                });
+              }}
               title={project.path}
             >
               <span style={cardIconStyle}>📁</span>

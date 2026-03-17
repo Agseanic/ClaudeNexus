@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import os from "node:os";
 import process from "node:process";
 import pty from "node-pty";
+import { autoCommit } from "./git-auto-commit.js";
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -36,10 +37,7 @@ class PtySession extends EventEmitter {
 
     const command = process.env.CLAUDE_PATH || `${process.env.HOME}/.local/bin/claude`;
     let args = [];
-    if (continueId === "__latest__") {
-      // claude --continue（不带 ID）= 恢复最近一次对话
-      args = ["--continue"];
-    } else if (continueId) {
+    if (continueId) {
       // claude --resume <uuid> = 恢复指定对话
       args = ["--resume", continueId];
     }
@@ -165,7 +163,7 @@ class PtyManager {
     this.sessions = new Map();
   }
 
-  getOrStartSession(sessionId, cwd, { cols, rows, continueId = "" } = {}) {
+  getOrStartSession(sessionId, cwd, { cols, rows, continueId = "", username = "" } = {}) {
     const existing = this.sessions.get(sessionId);
     if (existing?.alive) {
       if (cols || rows) {
@@ -178,6 +176,9 @@ class PtyManager {
     session.on("exit", () => {
       session.clearIdleTimer();
       this.sessions.delete(sessionId);
+      if (username && cwd) {
+        autoCommit(cwd, username).catch(() => {});
+      }
     });
     this.sessions.set(sessionId, session);
     return session;
@@ -201,6 +202,12 @@ class PtyManager {
     return [...this.sessions.values()]
       .filter((session) => session.alive)
       .map((session) => session.toJSON());
+  }
+
+  getSessionsByUser(username) {
+    return this.listSessions().filter((session) =>
+      session.sessionId.startsWith(`${username}-`),
+    );
   }
 }
 

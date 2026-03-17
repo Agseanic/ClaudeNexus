@@ -3,15 +3,68 @@ import ProjectList from "./ProjectList.jsx";
 import Sidebar from "./Sidebar.jsx";
 import TerminalView from "./TerminalView.jsx";
 
-function cwdToSessionId(cwd) {
-  return `session-${(cwd || "default").replace(/\//g, "-")}`;
+function cwdToSessionId(username, cwd) {
+  return `${username}-session-${(cwd || "default").replace(/\//g, "-")}`;
 }
 
 function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function StatusBar({ apiBase, token, onOpenSettings, projectName }) {
+function SyncStatusIndicator({ apiBase, token, enabled }) {
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/user/sync/status`, {
+          headers: authHeaders(token),
+        });
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        if (!cancelled) {
+          setStatus(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus({ clientConnected: false, errors: 1 });
+        }
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [apiBase, enabled, token]);
+
+  if (!enabled) {
+    return null;
+  }
+
+  if (status?.errors) {
+    return <span style={{ ...syncBadgeStyle, ...syncErrorStyle }}>同步异常</span>;
+  }
+
+  if (!status?.clientConnected) {
+    return <span style={{ ...syncBadgeStyle, ...syncWaitingStyle }}>等待客户端连接</span>;
+  }
+
+  const suffix = status?.syncedFiles ? ` (${status.syncedFiles})` : "";
+  return <span style={{ ...syncBadgeStyle, ...syncActiveStyle }}>同步中{suffix}</span>;
+}
+
+function StatusBar({ apiBase, token, onOpenSettings, onLogout, projectName, currentUser }) {
   const [health, setHealth] = useState({ status: "checking" });
 
   useEffect(() => {
@@ -44,17 +97,23 @@ function StatusBar({ apiBase, token, onOpenSettings, projectName }) {
     };
   }, [apiBase, token]);
 
-  const handleLogout = () => {
-    window.localStorage.removeItem("claudehub_v2_token");
-    window.location.reload();
-  };
-
   return (
     <header style={statusBarStyle}>
       <div style={brandStyle}>
         <span>Claude Nexus</span>
       </div>
       <div style={metaStyle}>
+        {currentUser?.username ? (
+          <span style={userBadgeStyle}>
+            {currentUser.username}
+            {currentUser.role === "admin" ? " · admin" : ""}
+          </span>
+        ) : null}
+        <SyncStatusIndicator
+          apiBase={apiBase}
+          token={token}
+          enabled={Boolean(currentUser?.syncEnabled)}
+        />
         {projectName ? (
           <span style={{ color: "#e4e4e7", fontWeight: 500 }}>{projectName}</span>
         ) : null}
@@ -77,7 +136,7 @@ function StatusBar({ apiBase, token, onOpenSettings, projectName }) {
         <button className="icon-btn" style={iconButtonStyle} onClick={onOpenSettings} title="设置">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
-        <button className="icon-btn" style={iconButtonStyle} onClick={handleLogout} title="登出">
+        <button className="icon-btn" style={iconButtonStyle} onClick={onLogout} title="登出">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </button>
       </div>
@@ -85,8 +144,18 @@ function StatusBar({ apiBase, token, onOpenSettings, projectName }) {
   );
 }
 
-export default function Workspace({ wsUrl, apiBase, config, token, onOpenSettings }) {
-  const baseCwd = config.defaultCwd;
+export default function Workspace({
+  wsUrl,
+  apiBase,
+  config,
+  token,
+  currentUser,
+  onLogout,
+  onUserUpdate,
+  onOpenSettings,
+}) {
+  const baseCwd = currentUser?.baseCwd || config.defaultCwd;
+  const username = currentUser?.username || "anonymous";
   const termRefs = useRef({});
   const [currentProject, setCurrentProject] = useState(null);
   const [tabs, setTabs] = useState([]);
@@ -105,10 +174,9 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
     return () => window.clearTimeout(timer);
   }, [activeTabId]);
 
-  const openProject = (projectPath) => {
+  const openProject = async (projectPath) => {
     setCurrentProject(projectPath);
     const projectName = projectPath.split("/").filter(Boolean).pop() || "Terminal";
-    const sessionId = cwdToSessionId(projectPath);
 
     const existing = tabs.find((tab) => tab.cwd === projectPath);
     if (existing) {
@@ -116,12 +184,33 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
       return;
     }
 
+    // 查询最新对话的 UUID，用 --resume <uuid> 打开，避免 __latest__ 匹配不上
+    let continueId = "";
+    try {
+      const res = await fetch(
+        `${apiBase}/api/conversations?cwd=${encodeURIComponent(projectPath)}`,
+        { headers: authHeaders(token) },
+      );
+      if (res.ok) {
+        const conversations = await res.json();
+        if (Array.isArray(conversations) && conversations.length > 0) {
+          continueId = conversations[0].conversationId || conversations[0].id.replace(/\.jsonl$/, "");
+        }
+      }
+    } catch {
+      // 查询失败就新建空会话
+    }
+
+    const sessionId = continueId
+      ? `${cwdToSessionId(username, projectPath)}-${continueId}`
+      : cwdToSessionId(username, projectPath);
+
     const tab = {
       id: `tab-${sessionId}`,
       label: projectName,
       cwd: projectPath,
       sessionId,
-      continueId: "__latest__",
+      continueId,
     };
     setTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
@@ -146,7 +235,7 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
       id: `tab-${currentProject}-${conversationId}`,
       label: title || projectName,
       cwd: currentProject,
-      sessionId: `${cwdToSessionId(currentProject)}-${conversationId}`,
+      sessionId: `${cwdToSessionId(username, currentProject)}-${conversationId}`,
       continueId: conversationId,
     };
     setTabs((current) => [...current, tab]);
@@ -166,7 +255,7 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
       id: `tab-${suffix}`,
       label: `${projectName} (new)`,
       cwd: projectPath,
-      sessionId: `${cwdToSessionId(projectPath)}-${suffix}`,
+      sessionId: `${cwdToSessionId(username, projectPath)}-${suffix}`,
       continueId: "",
     };
     setTabs((current) => [...current, tab]);
@@ -199,7 +288,7 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
       }
       const data = await response.json();
       setShowNewProject(false);
-      openProject(data.path);
+      await openProject(data.path);
     } catch (error) {
       window.alert(`创建失败：${error.message}`);
     } finally {
@@ -232,7 +321,14 @@ export default function Workspace({ wsUrl, apiBase, config, token, onOpenSetting
 
   return (
     <div style={rootStyle}>
-      <StatusBar apiBase={apiBase} token={token} onOpenSettings={onOpenSettings} projectName={currentProject?.split("/").filter(Boolean).pop() || null} />
+      <StatusBar
+        apiBase={apiBase}
+        token={token}
+        onOpenSettings={onOpenSettings}
+        onLogout={onLogout}
+        projectName={currentProject?.split("/").filter(Boolean).pop() || null}
+        currentUser={currentUser}
+      />
       <div style={bodyStyle}>
         <Sidebar
           apiBase={apiBase}
@@ -414,6 +510,41 @@ const metaStyle = {
   gap: 24,
   flex: 1,
   minWidth: 0,
+};
+
+const userBadgeStyle = {
+  color: "#c4b5fd",
+  fontSize: 12,
+  padding: "4px 8px",
+  borderRadius: 999,
+  background: "rgba(99,102,241,0.12)",
+  border: "1px solid rgba(99,102,241,0.24)",
+};
+
+const syncBadgeStyle = {
+  fontSize: 12,
+  padding: "4px 8px",
+  borderRadius: 999,
+  border: "1px solid rgba(255,255,255,0.08)",
+  whiteSpace: "nowrap",
+};
+
+const syncWaitingStyle = {
+  color: "#facc15",
+  background: "rgba(250,204,21,0.12)",
+  borderColor: "rgba(250,204,21,0.2)",
+};
+
+const syncActiveStyle = {
+  color: "#4ade80",
+  background: "rgba(74,222,128,0.12)",
+  borderColor: "rgba(74,222,128,0.2)",
+};
+
+const syncErrorStyle = {
+  color: "#f87171",
+  background: "rgba(248,113,113,0.12)",
+  borderColor: "rgba(248,113,113,0.2)",
 };
 
 const actionGroupStyle = {

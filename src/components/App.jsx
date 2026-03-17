@@ -10,15 +10,22 @@ export default function App() {
   const { config, isConfigured, wsUrl, apiBase, saveConfig } = useServerConfig();
   const [showSettings, setShowSettings] = useState(false);
   const [token, setToken] = useState(() => window.localStorage.getItem(TOKEN_KEY) || "");
+  const [currentUser, setCurrentUser] = useState(null);
   const [authState, setAuthState] = useState({
     loading: true,
     authenticated: false,
     needSetup: false,
+    hasUsers: false,
   });
 
   useEffect(() => {
     if (!isConfigured) {
-      setAuthState({ loading: false, authenticated: false, needSetup: false });
+      setAuthState({
+        loading: false,
+        authenticated: false,
+        needSetup: false,
+        hasUsers: false,
+      });
       return;
     }
 
@@ -32,20 +39,29 @@ export default function App() {
         });
         const data = await response.json();
         if (!cancelled) {
-          const authenticated = Boolean(data.authenticated && token);
+          const authenticated = Boolean(data.authenticated && token && data.user);
           if (!authenticated && token) {
             window.localStorage.removeItem(TOKEN_KEY);
             setToken("");
+            setCurrentUser(null);
           }
           setAuthState({
             loading: false,
             authenticated,
             needSetup: Boolean(data.needSetup),
+            hasUsers: Boolean(data.hasUsers),
           });
+          setCurrentUser(authenticated ? data.user : null);
         }
       } catch {
         if (!cancelled) {
-          setAuthState({ loading: false, authenticated: false, needSetup: false });
+          setAuthState({
+            loading: false,
+            authenticated: false,
+            needSetup: false,
+            hasUsers: false,
+          });
+          setCurrentUser(null);
         }
       }
     };
@@ -61,9 +77,20 @@ export default function App() {
     return <ServerSetup config={config} onSave={saveConfig} />;
   }
 
-  const handleLoginSuccess = (nextToken) => {
+  const handleLoginSuccess = (nextToken, user) => {
     window.localStorage.setItem(TOKEN_KEY, nextToken);
     setToken(nextToken);
+    setCurrentUser(user || null);
+  };
+
+  const handleLogout = () => {
+    window.localStorage.removeItem(TOKEN_KEY);
+    setToken("");
+    setCurrentUser(null);
+  };
+
+  const handleUserUpdate = (nextUser) => {
+    setCurrentUser(nextUser || null);
   };
 
   if (authState.loading) {
@@ -82,6 +109,7 @@ export default function App() {
       <Login
         apiBase={apiBase}
         needSetup={authState.needSetup}
+        hasUsers={authState.hasUsers}
         onSuccess={handleLoginSuccess}
       />
     );
@@ -94,12 +122,17 @@ export default function App() {
         apiBase={apiBase}
         config={config}
         token={token}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onUserUpdate={handleUserUpdate}
         onOpenSettings={() => setShowSettings(true)}
       />
       {showSettings ? (
         <ServerSetup
           config={config}
           isModal
+          currentUser={currentUser}
+          onUserUpdate={handleUserUpdate}
           onCancel={() => setShowSettings(false)}
           onSave={(patch) => {
             saveConfig(patch);

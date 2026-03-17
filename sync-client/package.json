@@ -1,0 +1,29 @@
+{
+  "name": "claude-nexus-sync",
+  "version": "1.0.0",
+  "description": "Claude Nexus 文件同步客户端",
+  "main": "index.js",
+  "bin": "index.js",
+  "pkg": {
+    "targets": [
+      "node18-macos-arm64",
+      "node18-linux-x64",
+      "node18-win-x64"
+    ],
+    "outputPath": "build",
+    "assets": []
+  },
+  "scripts": {
+    "build": "pkg . --compress GZip",
+    "build:mac": "pkg . --targets node18-macos-arm64 --output build/claude-nexus-sync-macos --compress GZip",
+    "build:linux": "pkg . --targets node18-linux-x64 --output build/claude-nexus-sync-linux --compress GZip",
+    "build:win": "pkg . --targets node18-win-x64 --output build/claude-nexus-sync-win.exe --compress GZip"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.1"
+  }
+}
