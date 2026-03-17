@@ -64,6 +64,67 @@ function SyncStatusIndicator({ apiBase, token, enabled }) {
   return <span style={{ ...syncBadgeStyle, ...syncActiveStyle }}>同步中{suffix}</span>;
 }
 
+function UsageIndicator({ apiBase, token }) {
+  const [usage, setUsage] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/usage`, {
+          headers: authHeaders(token),
+        });
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setUsage(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setUsage(null);
+        }
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 60000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [apiBase, token]);
+
+  if (!usage?.available) {
+    return null;
+  }
+
+  const fiveHourPct = Math.round(usage.fiveHour?.utilization || 0);
+  const sevenDayPct = Math.round(usage.sevenDay?.utilization || 0);
+
+  const getColor = (pct) => {
+    if (pct >= 80) return "#f87171";
+    if (pct >= 50) return "#facc15";
+    return "#4ade80";
+  };
+
+  const title = [
+    `5h 重置: ${usage.fiveHour?.resetsAt ? new Date(usage.fiveHour.resetsAt).toLocaleString() : "-"}`,
+    `7d 重置: ${usage.sevenDay?.resetsAt ? new Date(usage.sevenDay.resetsAt).toLocaleString() : "-"}`,
+  ].join("\n");
+
+  return (
+    <span style={usageBadgeStyle} title={title}>
+      <span style={{ color: getColor(fiveHourPct) }}>5h {fiveHourPct}%</span>
+      <span style={{ color: "#52525b" }}> · </span>
+      <span style={{ color: getColor(sevenDayPct) }}>7d {sevenDayPct}%</span>
+    </span>
+  );
+}
+
 function StatusBar({ apiBase, token, onOpenSettings, onLogout, projectName, currentUser }) {
   const [health, setHealth] = useState({ status: "checking" });
 
@@ -114,6 +175,7 @@ function StatusBar({ apiBase, token, onOpenSettings, onLogout, projectName, curr
           token={token}
           enabled={Boolean(currentUser?.syncEnabled)}
         />
+        <UsageIndicator apiBase={apiBase} token={token} />
         {projectName ? (
           <span style={{ color: "#e4e4e7", fontWeight: 500 }}>{projectName}</span>
         ) : null}
@@ -545,6 +607,16 @@ const syncErrorStyle = {
   color: "#f87171",
   background: "rgba(248,113,113,0.12)",
   borderColor: "rgba(248,113,113,0.2)",
+};
+
+const usageBadgeStyle = {
+  fontSize: 12,
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "rgba(148,163,184,0.08)",
+  border: "1px solid rgba(148,163,184,0.15)",
+  whiteSpace: "nowrap",
+  cursor: "default",
 };
 
 const actionGroupStyle = {

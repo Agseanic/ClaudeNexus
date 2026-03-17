@@ -23,11 +23,15 @@ const PORT = 8091;
 const HOST = "0.0.0.0";
 const execFileAsync = promisify(execFile);
 const SYNC_CLIENT_DIR = path.resolve(process.cwd(), "sync-client", "build");
+const CLAUDE_CREDENTIALS_PATH = path.join(os.homedir(), ".claude", ".credentials.json");
 const SYNC_CLIENT_FILES = {
   macos: "claude-nexus-sync-macos",
   linux: "claude-nexus-sync-linux",
   win: "claude-nexus-sync-win.exe",
 };
+const CACHE_SUCCESS_MS = 5 * 60 * 1000;
+const CACHE_FAILURE_MS = 15 * 1000;
+let usageCache = { data: null, expiresAt: 0 };
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -290,6 +294,67 @@ async function readFileAsSyncPayload(filePath) {
   };
 }
 
+async function fetchUsage() {
+  const now = Date.now();
+  if (usageCache.data && now < usageCache.expiresAt) {
+    return usageCache.data;
+  }
+
+  try {
+    const raw = await fs.readFile(CLAUDE_CREDENTIALS_PATH, "utf8");
+    const credentials = JSON.parse(raw);
+    const oauth = credentials?.claudeAiOauth;
+
+    if (!oauth?.accessToken) {
+      const result = { available: false, error: "No credentials" };
+      usageCache = { data: result, expiresAt: now + CACHE_FAILURE_MS };
+      return result;
+    }
+
+    if (oauth.expiresAt && oauth.expiresAt < now) {
+      const result = { available: false, error: "Token expired", expired: true };
+      usageCache = { data: result, expiresAt: now + CACHE_FAILURE_MS };
+      return result;
+    }
+
+    const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      headers: {
+        Authorization: `Bearer ${oauth.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "claude-code/2.1",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`API ${response.status}`);
+    }
+
+    const data = await response.json();
+    const result = {
+      available: true,
+      fiveHour: {
+        utilization: Math.min(100, Math.max(0, data?.five_hour?.utilization || 0)),
+        resetsAt: data?.five_hour?.resets_at || null,
+      },
+      sevenDay: {
+        utilization: Math.min(100, Math.max(0, data?.seven_day?.utilization || 0)),
+        resetsAt: data?.seven_day?.resets_at || null,
+      },
+      subscriptionType: oauth.subscriptionType || "unknown",
+    };
+
+    usageCache = { data: result, expiresAt: now + CACHE_SUCCESS_MS };
+    return result;
+  } catch (error) {
+    const result = {
+      available: false,
+      error: error instanceof Error ? error.message : "Failed",
+    };
+    usageCache = { data: result, expiresAt: now + CACHE_FAILURE_MS };
+    return result;
+  }
+}
+
 async function ensureProjectGitRepo(projectPath, username) {
   const gitDir = path.join(projectPath, ".git");
   let gitInited = false;
@@ -475,6 +540,12 @@ const server = http.createServer(async (req, res) => {
       await fileSyncManager.startWatching(user.username, user.baseCwd);
     }
     sendJson(res, 200, fileSyncManager.getSyncStatus(user.username));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/usage") {
+    const usage = await fetchUsage();
+    sendJson(res, 200, usage);
     return;
   }
 
