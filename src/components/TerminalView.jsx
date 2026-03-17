@@ -119,21 +119,8 @@ const TerminalView = forwardRef(function TerminalView(
       xtermTextarea.addEventListener("focus", handleTextareaFocus);
     }
 
-    const handleContainerScroll = (event) => {
-      event.stopPropagation();
-    };
-    containerRef.current?.addEventListener("scroll", handleContainerScroll, true);
-
-    const scrollObserver = new MutationObserver(() => {
-      resetPageScroll();
-    });
-    if (containerRef.current) {
-      scrollObserver.observe(containerRef.current, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-    }
+    // 不使用 MutationObserver 和容器 scroll 拦截，避免干扰 xterm 内部滚动
+    // 页面级防滚动已通过 CSS position:fixed 在 html/body 上实现
 
     const sendResize = () => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -172,9 +159,17 @@ const TerminalView = forwardRef(function TerminalView(
         }, 30000);
       };
 
+      let scrollTimer = null;
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
           term.write(new Uint8Array(event.data));
+          // 收到数据后持续滚到底部，防止跳转
+          resetPageScroll();
+          if (scrollTimer) window.clearTimeout(scrollTimer);
+          scrollTimer = window.setTimeout(() => {
+            term.scrollToBottom();
+            resetPageScroll();
+          }, 50);
           return;
         }
 
@@ -273,16 +268,12 @@ const TerminalView = forwardRef(function TerminalView(
       if (resizeTimer) window.clearTimeout(resizeTimer);
       resizeObserver.disconnect();
       window.removeEventListener("resize", onWindowResize);
-      if (containerRef.current) {
-        containerRef.current.removeEventListener("scroll", handleContainerScroll, true);
-      }
       if (xtermTextarea instanceof HTMLElement && handleTextareaFocus) {
         xtermTextarea.removeEventListener("focus", handleTextareaFocus);
       }
       if (restoreFocus) {
         restoreFocus();
       }
-      scrollObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
       wsRef.current?.close();
