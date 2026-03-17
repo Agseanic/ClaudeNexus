@@ -62,7 +62,7 @@ export default function ChatHistory({ apiBase, cwd, token, onSelect }) {
   }, [loadData, apiBase, cwd, token]);
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <section style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div style={headerStyle}>
         <span style={sectionHeader}>HISTORY</span>
         <button className="icon-btn" style={iconBtnStyle} onClick={loadData} title="刷新">
@@ -125,10 +125,12 @@ const iconBtnStyle = {
 };
 
 const listStyle = {
-  display: "grid",
-  gap: 2,
+  display: "flex",
+  flexDirection: "column",
+  gap: 1,
   overflowY: "auto",
-  maxHeight: 300,
+  flex: 1,
+  minHeight: 0,
 };
 
 const itemStyle = {

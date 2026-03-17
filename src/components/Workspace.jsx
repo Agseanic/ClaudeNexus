@@ -539,11 +539,12 @@ export default function Workspace({
 }
 
 const rootStyle = {
-  minHeight: "100vh",
+  height: "100vh",
   display: "flex",
   flexDirection: "column",
   background: "#09090b",
   color: "#fafafa",
+  overflow: "hidden",
 };
 
 const statusBarStyle = {
@@ -643,6 +644,7 @@ const bodyStyle = {
   display: "flex",
   flex: 1,
   minHeight: 0,
+  overflow: "hidden",
 };
 
 const mainStyle = {
@@ -657,6 +659,7 @@ const terminalWrapStyle = {
   minHeight: 0,
   position: "relative",
   padding: 8,
+  overflow: "hidden",
 };
 
 const tabBarStyle = {

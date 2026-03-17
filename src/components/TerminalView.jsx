@@ -92,6 +92,49 @@ const TerminalView = forwardRef(function TerminalView(
     term.open(containerRef.current);
     termRef.current = term;
 
+    const resetPageScroll = () => {
+      window.scrollTo(0, 0);
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
+      }
+    };
+
+    const xtermTextarea = containerRef.current?.querySelector(".xterm-helper-textarea");
+    let restoreFocus = null;
+    let handleTextareaFocus = null;
+    if (xtermTextarea instanceof HTMLElement) {
+      const originalFocus = xtermTextarea.focus.bind(xtermTextarea);
+      xtermTextarea.focus = (options) => {
+        originalFocus({ preventScroll: true, ...(options || {}) });
+      };
+      restoreFocus = () => {
+        xtermTextarea.focus = originalFocus;
+      };
+      handleTextareaFocus = () => {
+        resetPageScroll();
+      };
+      xtermTextarea.addEventListener("focus", handleTextareaFocus);
+    }
+
+    const handleContainerScroll = (event) => {
+      event.stopPropagation();
+    };
+    containerRef.current?.addEventListener("scroll", handleContainerScroll, true);
+
+    const scrollObserver = new MutationObserver(() => {
+      resetPageScroll();
+    });
+    if (containerRef.current) {
+      scrollObserver.observe(containerRef.current, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+
     const sendResize = () => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
@@ -162,20 +205,29 @@ const TerminalView = forwardRef(function TerminalView(
       };
     };
 
-    const ensureReady = () => {
-      const container = containerRef.current;
-      if (!container) {
-        return;
-      }
+    let lastWidth = 0;
+    let lastHeight = 0;
 
-      const hasSize = container.clientWidth > 0 && container.clientHeight > 0;
-      if (!hasSize) {
-        return;
-      }
+    const doFit = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w === 0 || h === 0) return;
+
+      // 只在容器尺寸真正变化时才 fit，避免写入内容时误触
+      if (w === lastWidth && h === lastHeight && connectedRef.current) return;
+      lastWidth = w;
+      lastHeight = h;
 
       fitAddon.fit();
       sendResize();
+      term.scrollToBottom();
+    };
 
+    const ensureReady = () => {
+      doFit();
       if (!connectedRef.current) {
         connectedRef.current = true;
         connect();
@@ -192,11 +244,17 @@ const TerminalView = forwardRef(function TerminalView(
       sendResize();
     });
 
-    const onWindowResize = () => ensureReady();
+    const onWindowResize = () => {
+      lastWidth = 0;
+      lastHeight = 0;
+      ensureReady();
+    };
     window.addEventListener("resize", onWindowResize);
 
+    let resizeTimer = null;
     const resizeObserver = new ResizeObserver(() => {
-      ensureReady();
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => ensureReady(), 150);
     });
     resizeObserver.observe(containerRef.current);
 
@@ -212,8 +270,19 @@ const TerminalView = forwardRef(function TerminalView(
         window.clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = null;
       }
+      if (resizeTimer) window.clearTimeout(resizeTimer);
       resizeObserver.disconnect();
       window.removeEventListener("resize", onWindowResize);
+      if (containerRef.current) {
+        containerRef.current.removeEventListener("scroll", handleContainerScroll, true);
+      }
+      if (xtermTextarea instanceof HTMLElement && handleTextareaFocus) {
+        xtermTextarea.removeEventListener("focus", handleTextareaFocus);
+      }
+      if (restoreFocus) {
+        restoreFocus();
+      }
+      scrollObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
       wsRef.current?.close();
@@ -245,4 +314,5 @@ const terminalStyle = {
   width: "100%",
   height: "100%",
   overflow: "hidden",
+  overscrollBehavior: "contain",
 };

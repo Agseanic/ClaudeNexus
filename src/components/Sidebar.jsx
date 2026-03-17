@@ -61,6 +61,7 @@ const expandedInnerStyle = {
   boxSizing: "border-box",
   gap: 12,
   overflow: "hidden",
+  minHeight: 0,
 };
 
 const collapsedInnerStyle = {
