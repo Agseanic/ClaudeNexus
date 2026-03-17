@@ -41,6 +41,10 @@ coverage/
 .env.*
 !.env.example
 
+# Markdown Files (Except README)
+*.md
+!README.md
+
 # Claude Data / Local Cache
 .claude/
 .gemini/
